@@ -1,77 +1,96 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix, roc_curve, auc, RocCurveDisplay
+from sklearn.metrics import ConfusionMatrixDisplay
+import xgboost as xgb
 
-# Load the dataset (update the path if needed)
-df = pd.read_csv("FacultyStrain.csv")
+# Load your data
+df = pd.read_csv('FacultyStrain.csv')
 
-# OPTIONAL: View column names
-print("Columns:", df.columns.tolist())
+# Assume StressLevel is the target
+target = 'StressLevel'
+features = [col for col in df.columns if col != target]
 
-# Encode categorical variables
-le = LabelEncoder()
-for col in ['Gender', 'Age Group', 'Academic Rank']:
-    if col in df.columns:
-        df[col] = le.fit_transform(df[col])
+# Standardize numeric features
+X = df[features]
+y = df[target]
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
 
-# ==============================
-# Figure 1: Correlation Heatmap
-# ==============================
-stress_vars = df.select_dtypes(include=['int64', 'float64']).iloc[:, 3:]  # stress-related columns
+# ---------- Figure 1: Correlation Heatmap ----------
 plt.figure(figsize=(10, 8))
-sns.heatmap(stress_vars.corr(), annot=True, cmap='coolwarm', fmt=".2f")
-plt.title("Figure 1: Correlation Heatmap of Stress and Impact Variables")
+sns.heatmap(df.corr(), annot=True, cmap='coolwarm', fmt='.2f')
+plt.title('Figure 1. Correlation Heatmap among Faculty Stress Variables')
 plt.tight_layout()
-plt.savefig("figure1_correlation_heatmap.png")
+plt.savefig('figure1_correlation_heatmap.png')
 plt.close()
 
-# ==========================================
-# Figure 2: K-Means Clustering (Sleep vs Workload)
-# ==========================================
-cols_needed = ['Sleep Hours per Night', 'Stress due to Teaching Workload']
-if all(col in df.columns for col in cols_needed):
-    cluster_df = df[cols_needed].dropna()
-    scaler = StandardScaler()
-    cluster_scaled = scaler.fit_transform(cluster_df)
+# ---------- Figure 2: Boxplot of Stress vs Sleep ----------
+plt.figure(figsize=(8, 6))
+sns.boxplot(x=df['StressLevel'], y=df['SleepHours'])
+plt.title('Figure 2. Stress Level vs. Sleep Hours')
+plt.xlabel('Stress Level')
+plt.ylabel('Sleep Hours')
+plt.tight_layout()
+plt.savefig('figure2_boxplot_stress_sleep.png')
+plt.close()
 
-    kmeans = KMeans(n_clusters=3, random_state=42)
-    labels = kmeans.fit_predict(cluster_scaled)
+# ---------- Figure 3: K-Means Clustering ----------
+kmeans = KMeans(n_clusters=3, random_state=42)
+clusters = kmeans.fit_predict(X_scaled)
+plt.figure(figsize=(8, 6))
+plt.scatter(X_scaled[:, 0], X_scaled[:, 1], c=clusters, cmap='viridis', alpha=0.6)
+plt.title('Figure 3. K-Means Clustering of Faculty Stress Profiles')
+plt.xlabel('Feature 1 (Scaled)')
+plt.ylabel('Feature 2 (Scaled)')
+plt.tight_layout()
+plt.savefig('figure3_kmeans_clustering.png')
+plt.close()
 
-    plt.figure(figsize=(8, 6))
-    sns.scatterplot(x=cluster_df[cols_needed[0]], y=cluster_df[cols_needed[1]], hue=labels, palette='Set2')
-    plt.title("Figure 2: K-Means Clustering Based on Sleep and Workload")
-    plt.xlabel(cols_needed[0])
-    plt.ylabel(cols_needed[1])
-    plt.tight_layout()
-    plt.savefig("figure2_kmeans_clustering.png")
-    plt.close()
+# ---------- Figure 4: Feature Importance (Random Forest) ----------
+rf = RandomForestClassifier(random_state=42)
+rf.fit(X, y)
+importances = pd.Series(rf.feature_importances_, index=features)
+importances.sort_values().plot(kind='barh', figsize=(10, 6))
+plt.title('Figure 4. Feature Importance from Random Forest')
+plt.tight_layout()
+plt.savefig('figure4_rf_feature_importance.png')
+plt.close()
 
-# ====================================================
-# Figure 3: Feature Importance from Random Forest Model
-# ====================================================
-target_col = 'Impact of Stress on Physical Health'
-if target_col in df.columns:
-    X_rf = df.drop(columns=[target_col]).dropna()
-    y_rf = (df[target_col] >= 4).astype(int)  # binary classification: high stress = 1
+# ---------- Train/Test Split ----------
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y, random_state=42)
 
-    rf_model = RandomForestClassifier(random_state=42)
-    rf_model.fit(X_rf, y_rf)
+# ---------- Figure 5: Confusion Matrix (XGBoost) ----------
+xgb_model = xgb.XGBClassifier(use_label_encoder=False, eval_metric='mlogloss')
+xgb_model.fit(X_train, y_train)
+y_pred = xgb_model.predict(X_test)
+cm = confusion_matrix(y_test, y_pred)
+disp = ConfusionMatrixDisplay(confusion_matrix=cm)
+disp.plot(cmap='Blues')
+plt.title('Figure 5. Confusion Matrix (XGBoost)')
+plt.tight_layout()
+plt.savefig('figure5_confusion_matrix_xgb.png')
+plt.close()
 
-    importances = pd.Series(rf_model.feature_importances_, index=X_rf.columns).sort_values(ascending=False)
+# ---------- Figure 6: ROC Curves ----------
+plt.figure(figsize=(8, 6))
+for cls in sorted(y.unique()):
+    y_bin = (y_test == cls).astype(int)
+    y_score = xgb_model.predict_proba(X_test)[:, cls - 1]
+    fpr, tpr, _ = roc_curve(y_bin, y_score)
+    roc_auc = auc(fpr, tpr)
+    plt.plot(fpr, tpr, label=f'Class {cls} (AUC = {roc_auc:.2f})')
 
-    plt.figure(figsize=(10, 6))
-    sns.barplot(x=importances.values[:10], y=importances.index[:10], palette='crest')
-    plt.title("Figure 3: Feature Importance - Predicting High Health Impact")
-    plt.xlabel("Importance Score")
-    plt.ylabel("Feature")
-    plt.tight_layout()
-    plt.savefig("figure3_feature_importance.png")
-    plt.close()
-
-print("✅ Figures generated and saved as PNG files:")
-print(" - figure1_correlation_heatmap.png")
-print(" - figure2_kmeans_clustering.png")
-print(" - figure3_feature_importance.png")
+plt.plot([0, 1], [0, 1], 'k--')
+plt.title('Figure 6. ROC Curves for Stress Level Prediction')
+plt.xlabel('False Positive Rate')
+plt.ylabel('True Positive Rate')
+plt.legend(loc='lower right')
+plt.tight_layout()
+plt.savefig('figure6_roc_curve.png')
+plt.close()
